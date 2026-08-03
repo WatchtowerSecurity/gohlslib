@@ -16,6 +16,7 @@ type muxerTrack struct {
 	firstRandomAccessReceived bool
 	h264DTSExtractor          *h264.DTSExtractor
 	h265DTSExtractor          *h265.DTSExtractor
+	dtsErrors                 int
 	mpegtsTrack               *mpegts.Track        // mpegts only
 	fmp4NextSample            *fmp4AugmentedSample // fmp4 only
 	fmp4Samples               []*fmp4.Sample       // fmp4 only
