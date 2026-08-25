@@ -15,11 +15,13 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
 )
 
-// maxConsecutiveDTSErrors is the number of consecutive access units with
-// invalid DTS after which the muxer gives up and returns the error.
-// Below this threshold, such access units are discarded without
-// interrupting the muxer; cameras using Axis Zipstream with dynamic FPS
-// occasionally emit non-monotonic timestamps.
+// maxConsecutiveDTSErrors is the failure budget for access units with
+// invalid DTS: each failure increments a per-track counter and each success
+// decrements it, and the muxer gives up and returns the error once the
+// counter reaches the budget. Below it, failing access units are discarded
+// (reported through OnEncodeError) without interrupting the muxer; cameras
+// using Axis Zipstream with dynamic FPS occasionally emit non-monotonic
+// timestamps.
 const maxConsecutiveDTSErrors = 30
 
 func multiplyAndDivide(v, m, d int64) int64 {
@@ -255,9 +257,14 @@ func (s *muxerSegmenter) writeH265(
 		if track.dtsErrors >= maxConsecutiveDTSErrors {
 			return fmt.Errorf("unable to extract DTS: %w", err)
 		}
+		track.stream.onEncodeError(fmt.Errorf(
+			"unable to extract DTS, discarding access unit (%d/%d): %w",
+			track.dtsErrors, maxConsecutiveDTSErrors, err))
 		return nil
 	}
-	track.dtsErrors = 0
+	if track.dtsErrors > 0 {
+		track.dtsErrors--
+	}
 
 	ps := &fmp4.Sample{}
 	err = ps.FillH265(
@@ -330,9 +337,14 @@ func (s *muxerSegmenter) writeH264(
 		if track.dtsErrors >= maxConsecutiveDTSErrors {
 			return fmt.Errorf("unable to extract DTS: %w", err)
 		}
+		track.stream.onEncodeError(fmt.Errorf(
+			"unable to extract DTS, discarding access unit (%d/%d): %w",
+			track.dtsErrors, maxConsecutiveDTSErrors, err))
 		return nil
 	}
-	track.dtsErrors = 0
+	if track.dtsErrors > 0 {
+		track.dtsErrors--
+	}
 
 	if s.variant == MuxerVariantMPEGTS {
 		if track.stream.nextSegment == nil {

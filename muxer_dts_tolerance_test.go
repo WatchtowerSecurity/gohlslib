@@ -4,28 +4,62 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bluenviron/gohlslib/v2/pkg/codecs"
 	"github.com/stretchr/testify/require"
 )
 
 // Covers the bounded DTS-error tolerance in muxerSegmenter (see
 // maxConsecutiveDTSErrors in muxer_segmenter.go): access units whose DTS
 // cannot be extracted are discarded without interrupting the muxer, the
-// counter resets on every successful extraction, and only a run of
-// maxConsecutiveDTSErrors consecutive failures propagates the error.
+// per-track failure counter decays on every successful extraction, and only
+// a counter reaching the budget propagates the error.
 
-func createDTSToleranceMuxer(t *testing.T, variant MuxerVariant) *Muxer {
+var testDTSVideoTrackH265 = &Track{
+	Codec: &codecs.H265{
+		VPS: []byte{
+			0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60,
+			0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00, 0x03,
+			0x00, 0x00, 0x03, 0x00, 0x78, 0x99, 0x98, 0x09,
+		},
+		SPS: []byte{
+			0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03,
+			0x00, 0x90, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03,
+			0x00, 0x78, 0xa0, 0x03, 0xc0, 0x80, 0x10, 0xe5,
+			0x96, 0x66, 0x69, 0x24, 0xca, 0xe0, 0x10, 0x00,
+			0x00, 0x03, 0x00, 0x10, 0x00, 0x00, 0x03, 0x01,
+			0xe0, 0x80,
+		},
+		PPS: []byte{0x44, 0x01, 0xc1, 0x72, 0xb4, 0x62, 0x40},
+	},
+	ClockRate: 90000,
+}
+
+func createDTSToleranceMuxer(t *testing.T, variant MuxerVariant, codec string) *Muxer {
+	track := testVideoTrack
+	if codec == "h265" {
+		track = testDTSVideoTrackH265
+	}
 	m := &Muxer{
 		Variant:            variant,
 		SegmentCount:       3,
 		SegmentMinDuration: 1 * time.Second,
-		Tracks:             []*Track{testVideoTrack},
+		Tracks:             []*Track{track},
 	}
 	err := m.Start()
 	require.NoError(t, err)
 	return m
 }
 
-func writeTestIDR(m *Muxer, pts int64) error {
+func writeTestIDR(m *Muxer, codec string, pts int64) error {
+	if codec == "h265" {
+		c := testDTSVideoTrackH265.Codec.(*codecs.H265)
+		return m.WriteH265(testDTSVideoTrackH265, testTime, pts, [][]byte{
+			c.VPS,
+			c.SPS,
+			c.PPS,
+			{0x26, 0x01, 0xaf, 0x08, 0x42, 0x23, 0x48, 0x8a, 0x43, 0xe2}, // IDR_W_RADL
+		})
+	}
 	return m.WriteH264(testVideoTrack, testTime, pts, [][]byte{
 		testSPS, // SPS
 		{8},     // PPS
@@ -41,56 +75,64 @@ func TestMuxerDTSErrorTolerance(t *testing.T) {
 		{"mpegts", MuxerVariantMPEGTS},
 		{"fmp4", MuxerVariantFMP4},
 	} {
-		t.Run(ca.name, func(t *testing.T) {
-			m := createDTSToleranceMuxer(t, ca.variant)
-			defer m.Close()
+		for _, codec := range []string{"h264", "h265"} {
+			if ca.variant == MuxerVariantMPEGTS && codec == "h265" {
+				// the MPEG-TS variant only supports H264
+				continue
+			}
+			t.Run(ca.name+"_"+codec, func(t *testing.T) {
+				m := createDTSToleranceMuxer(t, ca.variant, codec)
+				defer m.Close()
 
-			require.NoError(t, writeTestIDR(m, 90000))
-			require.NoError(t, writeTestIDR(m, 180000))
+				require.NoError(t, writeTestIDR(m, codec, 90000))
+				require.NoError(t, writeTestIDR(m, codec, 180000))
 
-			// non-monotonic DTS: must be discarded without an error
-			require.NoError(t, writeTestIDR(m, 90000))
+				// non-monotonic DTS: must be discarded without an error
+				require.NoError(t, writeTestIDR(m, codec, 90000))
 
-			// the stream keeps working afterwards
-			require.NoError(t, writeTestIDR(m, 270000))
-		})
+				// the stream keeps working afterwards
+				require.NoError(t, writeTestIDR(m, codec, 270000))
+			})
+		}
 	}
 }
 
 func TestMuxerDTSErrorGiveUp(t *testing.T) {
-	m := createDTSToleranceMuxer(t, MuxerVariantFMP4)
-	defer m.Close()
+	for _, codec := range []string{"h264", "h265"} {
+		t.Run(codec, func(t *testing.T) {
+			m := createDTSToleranceMuxer(t, MuxerVariantFMP4, codec)
+			defer m.Close()
 
-	require.NoError(t, writeTestIDR(m, 900000))
+			require.NoError(t, writeTestIDR(m, codec, 900000))
 
-	// the first maxConsecutiveDTSErrors-1 failures are discarded silently
-	for i := 0; i < maxConsecutiveDTSErrors-1; i++ {
-		require.NoError(t, writeTestIDR(m, int64(1000+i)))
+			// the first maxConsecutiveDTSErrors-1 failures are discarded
+			for i := 0; i < maxConsecutiveDTSErrors-1; i++ {
+				require.NoError(t, writeTestIDR(m, codec, int64(1000+i)))
+			}
+
+			// the budget boundary propagates the error
+			require.Error(t, writeTestIDR(m, codec, 500))
+		})
 	}
-
-	// the boundary failure propagates the error
-	require.Error(t, writeTestIDR(m, 500))
 }
 
-func TestMuxerDTSErrorCounterResetsOnSuccess(t *testing.T) {
-	m := createDTSToleranceMuxer(t, MuxerVariantFMP4)
+func TestMuxerDTSErrorCounterDecaysOnSuccess(t *testing.T) {
+	m := createDTSToleranceMuxer(t, MuxerVariantFMP4, "h264")
 	defer m.Close()
 
-	require.NoError(t, writeTestIDR(m, 900000))
+	require.NoError(t, writeTestIDR(m, "h264", 900000))
 
-	// one failure short of the limit...
+	// one failure short of the budget...
 	for i := 0; i < maxConsecutiveDTSErrors-1; i++ {
-		require.NoError(t, writeTestIDR(m, int64(1000+i)))
+		require.NoError(t, writeTestIDR(m, "h264", int64(1000+i)))
 	}
 
-	// ...a successful unit resets the counter...
-	require.NoError(t, writeTestIDR(m, 990000))
+	// ...a successful unit decays the counter by one...
+	require.NoError(t, writeTestIDR(m, "h264", 990000))
 
-	// ...so a fresh run below the limit is discarded again without error
-	for i := 0; i < maxConsecutiveDTSErrors-1; i++ {
-		require.NoError(t, writeTestIDR(m, int64(2000+i)))
-	}
+	// ...so exactly one more failure is tolerated...
+	require.NoError(t, writeTestIDR(m, "h264", 3000))
 
-	// and the muxer still accepts good input
-	require.NoError(t, writeTestIDR(m, 1080000))
+	// ...and the next one reaches the budget
+	require.Error(t, writeTestIDR(m, "h264", 500))
 }
