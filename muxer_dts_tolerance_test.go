@@ -124,7 +124,7 @@ func TestMuxerDTSErrorGiveUp(t *testing.T) {
 			require.NoError(t, writeTestIDR(m, codec, 900000))
 
 			// the first maxConsecutiveDTSErrors-1 failures are discarded
-			for i := 0; i < maxConsecutiveDTSErrors-1; i++ {
+			for i := range maxConsecutiveDTSErrors - 1 {
 				require.NoError(t, writeTestIDR(m, codec, int64(1000+i)))
 			}
 
@@ -141,7 +141,7 @@ func TestMuxerDTSErrorCounterDecaysOnSuccess(t *testing.T) {
 	require.NoError(t, writeTestIDR(m, "h264", 900000))
 
 	// one failure short of the budget...
-	for i := 0; i < maxConsecutiveDTSErrors-1; i++ {
+	for i := range maxConsecutiveDTSErrors - 1 {
 		require.NoError(t, writeTestIDR(m, "h264", int64(1000+i)))
 	}
 
