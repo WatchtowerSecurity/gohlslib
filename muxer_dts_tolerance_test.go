@@ -14,6 +14,24 @@ import (
 // per-track failure counter decays on every successful extraction, and only
 // a counter reaching the budget propagates the error.
 
+var dtsTestTime = time.Date(2010, 0o1, 0o1, 0o1, 0o1, 0o1, 0, time.UTC)
+
+// baseline profile without POC
+var dtsTestH264SPS = []byte{
+	0x67, 0x42, 0xc0, 0x28, 0xd9, 0x00, 0x78, 0x02,
+	0x27, 0xe5, 0x84, 0x00, 0x00, 0x03, 0x00, 0x04,
+	0x00, 0x00, 0x03, 0x00, 0xf0, 0x3c, 0x60, 0xc9,
+	0x20,
+}
+
+var testDTSVideoTrackH264 = &Track{
+	Codec: &codecs.H264{
+		SPS: dtsTestH264SPS,
+		PPS: []byte{0x08},
+	},
+	ClockRate: 90000,
+}
+
 var testDTSVideoTrackH265 = &Track{
 	Codec: &codecs.H265{
 		VPS: []byte{
@@ -35,7 +53,7 @@ var testDTSVideoTrackH265 = &Track{
 }
 
 func createDTSToleranceMuxer(t *testing.T, variant MuxerVariant, codec string) *Muxer {
-	track := testVideoTrack
+	track := testDTSVideoTrackH264
 	if codec == "h265" {
 		track = testDTSVideoTrackH265
 	}
@@ -53,17 +71,17 @@ func createDTSToleranceMuxer(t *testing.T, variant MuxerVariant, codec string) *
 func writeTestIDR(m *Muxer, codec string, pts int64) error {
 	if codec == "h265" {
 		c := testDTSVideoTrackH265.Codec.(*codecs.H265)
-		return m.WriteH265(testDTSVideoTrackH265, testTime, pts, [][]byte{
+		return m.WriteH265(testDTSVideoTrackH265, dtsTestTime, pts, [][]byte{
 			c.VPS,
 			c.SPS,
 			c.PPS,
 			{0x26, 0x01, 0xaf, 0x08, 0x42, 0x23, 0x48, 0x8a, 0x43, 0xe2}, // IDR_W_RADL
 		})
 	}
-	return m.WriteH264(testVideoTrack, testTime, pts, [][]byte{
-		testSPS, // SPS
-		{8},     // PPS
-		{5},     // IDR
+	return m.WriteH264(testDTSVideoTrackH264, dtsTestTime, pts, [][]byte{
+		dtsTestH264SPS, // SPS
+		{8},            // PPS
+		{5},            // IDR
 	})
 }
 
