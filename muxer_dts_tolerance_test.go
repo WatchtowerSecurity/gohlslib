@@ -9,7 +9,7 @@ import (
 )
 
 // Covers the bounded DTS-error tolerance in muxerSegmenter (see
-// maxConsecutiveDTSErrors in muxer_segmenter.go): access units whose DTS
+// maxDTSErrorBudget in muxer_segmenter.go): access units whose DTS
 // cannot be extracted are discarded without interrupting the muxer, the
 // per-track failure counter decays on every successful extraction, and only
 // a counter reaching the budget propagates the error.
@@ -123,8 +123,8 @@ func TestMuxerDTSErrorGiveUp(t *testing.T) {
 
 			require.NoError(t, writeTestIDR(m, codec, 900000))
 
-			// the first maxConsecutiveDTSErrors-1 failures are discarded
-			for i := range maxConsecutiveDTSErrors - 1 {
+			// the first maxDTSErrorBudget-1 failures are discarded
+			for i := range maxDTSErrorBudget - 1 {
 				require.NoError(t, writeTestIDR(m, codec, int64(1000+i)))
 			}
 
@@ -141,7 +141,7 @@ func TestMuxerDTSErrorCounterDecaysOnSuccess(t *testing.T) {
 	require.NoError(t, writeTestIDR(m, "h264", 900000))
 
 	// one failure short of the budget...
-	for i := range maxConsecutiveDTSErrors - 1 {
+	for i := range maxDTSErrorBudget - 1 {
 		require.NoError(t, writeTestIDR(m, "h264", int64(1000+i)))
 	}
 
