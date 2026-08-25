@@ -16,6 +16,7 @@ type muxerTrack struct {
 	firstRandomAccessReceived bool
 	h264DTSExtractor          *h264.DTSExtractor
 	h265DTSExtractor          *h265.DTSExtractor
+	dtsErrors                 int
 	mpegtsTrack               *mpegts.Track        // mpegts only
 	mpegtsAACPTS              int64                // mpegts only, in track clock-rate units
 	mpegtsAACPTSInitialized   bool                 // mpegts only
